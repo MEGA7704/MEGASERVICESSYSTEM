@@ -1,4 +1,4 @@
-# MEGA SERVICES WORK SYSTEM v1.1 — Cloudflare Pages + GitHub
+# MEGA SERVICES WORK SYSTEM v1.2 — Cloudflare Pages + GitHub
 
 Application intégrée de travail et de gestion pour **MEGA SERVICES SARL U**.
 
@@ -11,16 +11,16 @@ Application intégrée de travail et de gestion pour **MEGA SERVICES SARL U**.
 
 Aucun mot de passe ni token Cloudflare n’est inclus dans Git.
 
-## Déploiement GitHub → Cloudflare Pages
+## Paramètres GitHub → Cloudflare Pages
 
-Le ZIP est volontairement construit **sans dossier parent** : copiez son contenu directement à la racine du dépôt GitHub.
+Le ZIP est construit **sans dossier parent** : copiez son contenu directement à la racine du dépôt GitHub.
 
-Dans Cloudflare Pages, utilisez :
+Dans Cloudflare Pages :
 
 - **Chemin d’accès / Root directory :** laisser vide
 - **Commande de version / Build command :** `exit 0`
 - **Répertoire de sortie / Build output directory :** `public`
-- **Branche de production :** `main` (ou votre branche principale)
+- **Branche de production :** `main` ou votre branche principale
 
 `wrangler.toml` contient déjà les bindings D1/KV et `pages_build_output_dir = "./public"`.
 
@@ -32,23 +32,29 @@ Dans Cloudflare > Workers & Pages > votre projet > Settings > Variables and Secr
 
 Choisissez une valeur longue et privée. Ne la placez jamais dans GitHub.
 
-## Première ouverture — D1 automatique
+## Première installation — correction HTTP 500
 
-La v1.1 corrige le blocage « Base D1 non initialisée ».
+La v1.2 corrige l’échec observé sur **Initialiser MEGA SERVICES**.
 
-Au premier chargement, l’API vérifie le schéma D1 sans supposer que la table `users` existe. Si la base est vide, l’écran **Initialiser MEGA SERVICES** reste accessible.
+Avant l’initialisation, l’écran contrôle maintenant :
 
-Lorsque vous validez le formulaire avec le bon `BOOTSTRAP_TOKEN` :
+- le binding D1 `SYSTEME_DB` ;
+- le binding KV `SYSTEME_KV` ;
+- la présence du secret `BOOTSTRAP_TOKEN`.
 
-1. le serveur vérifie le secret ;
-2. il crée automatiquement les tables et index manquants dans D1 ;
-3. il insère les caisses, catégories et services de départ ;
-4. il crée le premier Super Administrateur ;
-5. il ouvre la session sécurisée dans KV.
+Le schéma D1 est installé par **petits lots SQL contrôlés**, au lieu d’envoyer toute l’initialisation comme une seule grosse opération. Les créations sont idempotentes : une installation partiellement effectuée peut être relancée sans recréer les données déjà présentes.
 
-L’initialisation D1 n’est donc plus une étape manuelle obligatoire pour une installation neuve.
+Le système utilise désormais **D1 comme stockage fiable des sessions** et KV comme **cache de session**. Une indisponibilité temporaire de KV ne doit donc plus empêcher la connexion si D1 fonctionne.
 
-Les fichiers `migrations/*.sql` restent présents et constituent la source de vérité pour les futures évolutions de schéma. Pour une maintenance manuelle :
+Si une ancienne tentative a déjà créé le Super Administrateur mais a échoué juste après, l’application le détecte. L’écran de connexion apparaît et la prochaine connexion répare automatiquement le schéma manquant.
+
+## Migrations D1
+
+- `0001_initial.sql`
+- `0002_add_supplier_orders.sql`
+- `0003_sessions.sql`
+
+Pour une installation neuve, le formulaire d’initialisation sait créer automatiquement le schéma. Pour une maintenance manuelle :
 
 ```bash
 npm install
@@ -72,10 +78,10 @@ npm run dev
 
 ## Modules inclus
 
-- authentification sécurisée et Super Admin ;
-- sessions KV ;
+- authentification et Super Admin ;
+- sessions D1 + cache KV ;
 - clients ;
-- services ;
+- services et tarifs ;
 - travaux ;
 - paiements et reçus ;
 - documents et versions ;
@@ -86,6 +92,7 @@ npm run dev
 - crédits et remboursements ;
 - dépenses ;
 - fournisseurs ;
+- commandes fournisseurs ;
 - employés et utilisateurs ;
 - rapports ;
 - recherche universelle ;
@@ -95,26 +102,28 @@ npm run dev
 
 ## Règle crédit importante
 
-Un remboursement diminue la dette restante. Il n’est pas bloqué par un contrôle de « solde disponible » du compte crédit.
+Un remboursement diminue directement la dette restante. Il n’est pas bloqué par un faux contrôle de « solde insuffisant » du compte crédit.
 
 Exemple : dette 108 000 FCFA, remboursement 10 000 FCFA, nouveau solde 98 000 FCFA.
-
-## Stockage de fichiers et IA
-
-Cette version utilise uniquement les ressources demandées **D1 + KV**. Les gros fichiers binaires (scans, PDF importés, photos, CNI, diplômes) nécessiteront idéalement R2. L’IA et WhatsApp nécessitent également leurs propres services/secrets et ne sont pas simulés avec de fausses données.
 
 ## Sécurité
 
 - mots de passe PBKDF2-SHA256 avec sel ;
 - aucun mot de passe en clair ;
-- cookie de session HttpOnly / Secure / SameSite ;
-- sessions côté KV ;
+- cookie HttpOnly / Secure / SameSite ;
+- jeton de session aléatoire ;
+- seul le hash du jeton est conservé dans D1 ;
+- KV utilisé en cache, sans devenir le seul point de vérité de la session ;
 - permissions côté serveur ;
 - contrôle d’origine des écritures ;
 - CSP et en-têtes de sécurité ;
 - verrouillage après échecs répétés ;
 - journal d’audit ;
-- initialisation D1 protégée par `BOOTSTRAP_TOKEN`.
+- initialisation protégée par `BOOTSTRAP_TOKEN`.
+
+## Stockage de fichiers et IA
+
+Cette version utilise les ressources demandées **D1 + KV**. Les gros fichiers binaires (scans, PDF importés, photos, CNI, diplômes) nécessiteront idéalement Cloudflare R2. L’IA et WhatsApp nécessitent également leurs propres services et secrets.
 
 ## Arborescence attendue à la racine GitHub
 
@@ -130,4 +139,4 @@ wrangler.toml
 README.md
 ```
 
-**MEGA SERVICES WORK SYSTEM — MSWS v1.1.0**
+**MEGA SERVICES WORK SYSTEM — MSWS v1.2.0**

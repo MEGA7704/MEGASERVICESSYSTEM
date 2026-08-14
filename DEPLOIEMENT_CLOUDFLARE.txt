@@ -1,4 +1,4 @@
-MEGA SERVICES WORK SYSTEM v1.1.0
+MEGA SERVICES WORK SYSTEM v1.2.0
 
 PARAMÈTRES CLOUDFLARE PAGES
 ---------------------------
@@ -23,11 +23,24 @@ Nom : systeme_kv
 ID : 44f6968fcb75493e9e7d5bbdacabf760
 Binding : SYSTEME_KV
 
+CORRECTION V1.2
+---------------
+- Correction de l'erreur HTTP 500 pendant la première initialisation.
+- Installation du schéma D1 par lots SQL contrôlés.
+- Messages d'erreur d'installation plus précis.
+- Vérification visuelle D1 / KV / BOOTSTRAP_TOKEN avant validation.
+- Sessions fiables stockées dans D1, avec KV utilisé comme cache.
+- Réparation automatique du schéma lors de la connexion si une ancienne tentative a laissé une base partiellement initialisée.
+- Nouvelle migration : migrations/0003_sessions.sql.
+
 PREMIÈRE OUVERTURE
 ------------------
-La base D1 peut être vide. La création des tables est maintenant intégrée au premier formulaire d'initialisation et protégée par BOOTSTRAP_TOKEN.
-Il n'est plus nécessaire d'appliquer manuellement les migrations pour une installation neuve.
+1. Vérifier que le site affiche D1 SYSTEME_DB avec une coche verte.
+2. Vérifier BOOTSTRAP_TOKEN avec une coche verte.
+3. KV SYSTEME_KV doit idéalement être vert. S'il est temporairement indisponible, D1 reste capable de gérer les sessions.
+4. Saisir le nom, l'email, un mot de passe d'au moins 10 caractères et la valeur exacte de BOOTSTRAP_TOKEN.
+5. Cliquer sur « Initialiser le système » une seule fois et attendre la réponse.
 
 IMPORTANT POUR GITHUB
 ---------------------
-Les fichiers de ce ZIP sont directement à la racine de l'archive. Envoyez-les tels quels à la racine du dépôt GitHub. Ne créez pas un sous-dossier mega-services-work-system.
+Les fichiers du ZIP sont directement à la racine de l'archive. Envoyez-les tels quels à la racine du dépôt GitHub. Ne créez pas de sous-dossier mega-services-work-system.

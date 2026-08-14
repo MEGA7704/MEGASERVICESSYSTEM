@@ -2,7 +2,7 @@ import fs from 'node:fs';
 const required = [
   'public/index.html', 'public/styles.css', 'public/app.js', 'public/_routes.json',
   'functions/api/[[path]].js', 'functions/api/schema.js',
-  'migrations/0001_initial.sql', 'migrations/0002_add_supplier_orders.sql',
+  'migrations/0001_initial.sql', 'migrations/0002_add_supplier_orders.sql', 'migrations/0003_sessions.sql',
   'wrangler.toml'
 ];
 let failed = false;
@@ -24,4 +24,4 @@ for (const needle of ['installInitialSchema', 'databaseSchemaState', 'INITIAL_SC
   if (!api.includes(needle)) { console.error('FIRST_RUN_INIT_MISSING', needle); failed = true; }
 }
 if (failed) process.exit(1);
-console.log('MSWS v1.1 source check: OK');
+console.log('MSWS v1.2 source check: OK');

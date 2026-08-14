@@ -92,10 +92,12 @@ export async function onRequest(context) {
   } catch (error) {
     console.error('API_ERROR', error?.stack || error);
     const status = Number(error?.status || 500);
+    const code = error?.code || (status >= 500 ? 'SERVER_ERROR' : 'REQUEST_ERROR');
+    const safeKnownServerError = status >= 500 && error?.code && error?.message;
     return json({
       ok: false,
-      error: status >= 500 ? "Une erreur serveur est survenue. Vos données n'ont pas été volontairement supprimées." : (error?.message || 'Requête invalide.'),
-      code: error?.code || (status >= 500 ? 'SERVER_ERROR' : 'REQUEST_ERROR')
+      error: safeKnownServerError ? error.message : (status >= 500 ? "Une erreur serveur est survenue. Vos données n'ont pas été volontairement supprimées." : (error?.message || 'Requête invalide.')),
+      code
     }, status);
   }
 }
@@ -146,14 +148,18 @@ function b64(bytes) { return btoa(String.fromCharCode(...bytes)); }
 function fromB64(s) { return Uint8Array.from(atob(s), c => c.charCodeAt(0)); }
 function randomBytes(n = 32) { const a = new Uint8Array(n); crypto.getRandomValues(a); return a; }
 function hex(bytes) { return [...bytes].map(b => b.toString(16).padStart(2, '0')).join(''); }
+async function sha256Hex(value) { return hex(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(String(value))))); }
 
 async function derivePassword(password, saltBytes) {
   const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(password), 'PBKDF2', false, ['deriveBits']);
   const bits = await crypto.subtle.deriveBits({ name: 'PBKDF2', hash: 'SHA-256', salt: saltBytes, iterations: PBKDF2_ITERATIONS }, key, 256);
   return b64(new Uint8Array(bits));
 }
-async function passwordRecord(password) {
+function validatePassword(password) {
   if (typeof password !== 'string' || password.length < 10) throw httpError(400, 'Le mot de passe doit contenir au moins 10 caractères.');
+}
+async function passwordRecord(password) {
+  validatePassword(password);
   const salt = randomBytes(16);
   return { salt: b64(salt), hash: await derivePassword(password, salt) };
 }
@@ -182,18 +188,36 @@ function clearSessionCookie(request) {
 }
 async function createSession(request, env, user) {
   const token = hex(randomBytes(32));
+  const tokenHash = await sha256Hex(token);
   const ttl = Math.max(1800, int(env.SESSION_TTL, DEFAULT_SESSION_TTL));
-  await env.SYSTEME_KV.put(`session:${token}`, JSON.stringify({ user_id: user.id, role: user.role, created_at: nowIso() }), { expirationTtl: ttl });
-  return { token, ttl };
+  const expiresAt = new Date(Date.now() + ttl * 1000).toISOString();
+  await env.SYSTEME_DB.prepare(`INSERT INTO sessions(token_hash,user_id,expires_at,created_at) VALUES(?,?,?,?)`).bind(tokenHash, user.id, expiresAt, nowIso()).run();
+  if (env.SYSTEME_KV?.put) {
+    try { await env.SYSTEME_KV.put(`session:${tokenHash}`, JSON.stringify({ user_id: user.id, role: user.role, expires_at: expiresAt }), { expirationTtl: ttl }); }
+    catch (e) { console.warn('KV_SESSION_CACHE_WRITE_FAILED', e?.message || e); }
+  }
+  return { token, tokenHash, ttl };
 }
 async function requireAuth(request, env) {
   const token = parseCookie(request, SESSION_COOKIE);
   if (!token) throw httpError(401, 'Connexion requise.', 'AUTH_REQUIRED');
-  const session = await env.SYSTEME_KV.get(`session:${token}`, { type: 'json' });
+  const tokenHash = await sha256Hex(token);
+  let session = null;
+  if (env.SYSTEME_KV?.get) {
+    try { session = await env.SYSTEME_KV.get(`session:${tokenHash}`, { type: 'json' }); }
+    catch (e) { console.warn('KV_SESSION_CACHE_READ_FAILED', e?.message || e); }
+  }
+  if (!session?.user_id) {
+    session = await env.SYSTEME_DB.prepare(`SELECT user_id,expires_at FROM sessions WHERE token_hash=? AND expires_at>?`).bind(tokenHash, nowIso()).first();
+    if (session?.user_id && env.SYSTEME_KV?.put) {
+      const seconds = Math.max(60, Math.floor((new Date(session.expires_at).getTime() - Date.now()) / 1000));
+      try { await env.SYSTEME_KV.put(`session:${tokenHash}`, JSON.stringify(session), { expirationTtl: seconds }); } catch {}
+    }
+  }
   if (!session?.user_id) throw httpError(401, 'Session expirée.', 'SESSION_EXPIRED');
   const user = await env.SYSTEME_DB.prepare(`SELECT id,name,email,phone,role,active,employee_id,last_login_at FROM users WHERE id=?`).bind(session.user_id).first();
   if (!user || !user.active) throw httpError(401, 'Compte inactif ou session invalide.');
-  return { user, token };
+  return { user, token, tokenHash };
 }
 function requireRole(auth, roles) {
   if (!roles.has(auth.user.role)) throw httpError(403, 'Vous ne disposez pas des droits nécessaires.', 'FORBIDDEN');
@@ -210,55 +234,138 @@ async function audit(env, auth, request, action, entityType, entityId, oldData =
   } catch (e) { console.warn('AUDIT_FAILED', e?.message || e); }
 }
 
+function assertCloudflareBindings(env) {
+  if (!env.SYSTEME_DB || typeof env.SYSTEME_DB.prepare !== 'function') {
+    throw httpError(503, 'Binding D1 SYSTEME_DB absent. Ajoutez la base systeme-d1 au projet Cloudflare Pages.', 'D1_BINDING_MISSING');
+  }
+}
+
+function splitSqlStatements(sql) {
+  const out = [];
+  let current = '';
+  let quote = null;
+  let lineComment = false;
+  for (let i = 0; i < sql.length; i++) {
+    const ch = sql[i], next = sql[i + 1];
+    if (lineComment) {
+      if (ch === '\n') { lineComment = false; current += ch; }
+      continue;
+    }
+    if (!quote && ch === '-' && next === '-') { lineComment = true; i++; continue; }
+    if (quote) {
+      current += ch;
+      if (ch === quote) {
+        if (sql[i + 1] === quote) { current += sql[++i]; }
+        else quote = null;
+      }
+      continue;
+    }
+    if (ch === "'" || ch === '"') { quote = ch; current += ch; continue; }
+    if (ch === ';') {
+      const stmt = current.trim();
+      if (stmt) out.push(stmt);
+      current = '';
+      continue;
+    }
+    current += ch;
+  }
+  const tail = current.trim();
+  if (tail) out.push(tail);
+  return out;
+}
+
+
 async function databaseSchemaState(env) {
+  if (!env.SYSTEME_DB || typeof env.SYSTEME_DB.prepare !== 'function') {
+    return { ready: false, missing: [...REQUIRED_TABLES], binding_missing: true };
+  }
   const placeholders = REQUIRED_TABLES.map(() => '?').join(',');
   const rows = await env.SYSTEME_DB.prepare(`SELECT name FROM sqlite_schema WHERE type='table' AND name IN (${placeholders})`)
     .bind(...REQUIRED_TABLES).all();
   const present = new Set((rows.results || []).map(r => r.name));
   const missing = REQUIRED_TABLES.filter(name => !present.has(name));
-  return { ready: missing.length === 0, missing };
+  return { ready: missing.length === 0, missing, binding_missing: false };
 }
 async function installInitialSchema(env) {
-  await env.SYSTEME_DB.exec(INITIAL_SCHEMA_SQL);
+  assertCloudflareBindings(env);
+  const statements = splitSqlStatements(INITIAL_SCHEMA_SQL);
+  const chunkSize = 12;
+  for (let i = 0; i < statements.length; i += chunkSize) {
+    const chunk = statements.slice(i, i + chunkSize);
+    try {
+      await env.SYSTEME_DB.batch(chunk.map(sql => env.SYSTEME_DB.prepare(sql)));
+    } catch (e) {
+      console.error('D1_SCHEMA_CHUNK_FAILED', { start: i + 1, end: i + chunk.length, message: e?.message || String(e) });
+      throw httpError(500, `Initialisation D1 interrompue au bloc SQL ${Math.floor(i / chunkSize) + 1}. Rechargez la page puis réessayez.`, 'D1_SCHEMA_INIT_FAILED');
+    }
+  }
   const state = await databaseSchemaState(env);
   if (!state.ready) throw httpError(500, `Initialisation D1 incomplète. Tables manquantes : ${state.missing.join(', ')}`, 'D1_SCHEMA_INIT_FAILED');
   return state;
 }
 async function health(env) {
-  const db = await env.SYSTEME_DB.prepare(`SELECT 1 ok`).first();
-  const schema = await databaseSchemaState(env);
-  return json({ ok: true, app: 'MEGA SERVICES WORK SYSTEM', database: db?.ok === 1 ? 'connected' : 'unknown', database_initialized: schema.ready, schema_version: schema.ready ? SCHEMA_VERSION : 0, missing_tables: schema.missing, kv: !!env.SYSTEME_KV, time: nowIso() });
+  const d1Bound = !!env.SYSTEME_DB && typeof env.SYSTEME_DB.prepare === 'function';
+  const kvBound = !!env.SYSTEME_KV && typeof env.SYSTEME_KV.get === 'function';
+  let db = null, schema = { ready: false, missing: [...REQUIRED_TABLES] };
+  if (d1Bound) {
+    db = await env.SYSTEME_DB.prepare(`SELECT 1 ok`).first();
+    schema = await databaseSchemaState(env);
+  }
+  return json({ ok: true, app: 'MEGA SERVICES WORK SYSTEM', database: d1Bound && db?.ok === 1 ? 'connected' : 'missing', database_initialized: schema.ready, schema_version: schema.ready ? SCHEMA_VERSION : 0, missing_tables: schema.missing, kv: kvBound, bootstrap_secret_configured: !!env.BOOTSTRAP_TOKEN, time: nowIso() });
 }
 async function bootstrapStatus(env) {
+  const d1Bound = !!env.SYSTEME_DB && typeof env.SYSTEME_DB.prepare === 'function';
+  const kvBound = !!env.SYSTEME_KV && typeof env.SYSTEME_KV.get === 'function' && typeof env.SYSTEME_KV.put === 'function';
+  if (!d1Bound) return json({ ok: true, initialized: false, database_initialized: false, schema_version: 0, missing_tables: [...REQUIRED_TABLES], d1_bound: false, kv_bound: kvBound, repair_needed: false, bootstrap_secret_configured: !!env.BOOTSTRAP_TOKEN });
   const schema = await databaseSchemaState(env);
-  if (!schema.ready) return json({ ok: true, initialized: false, database_initialized: false, schema_version: 0, missing_tables: schema.missing, bootstrap_secret_configured: !!env.BOOTSTRAP_TOKEN });
-  const row = await env.SYSTEME_DB.prepare(`SELECT COUNT(*) count FROM users`).first();
-  return json({ ok: true, initialized: Number(row?.count || 0) > 0, database_initialized: true, schema_version: SCHEMA_VERSION, missing_tables: [], bootstrap_secret_configured: !!env.BOOTSTRAP_TOKEN });
+  let initialized = false;
+  const usersTable = await env.SYSTEME_DB.prepare(`SELECT 1 ok FROM sqlite_schema WHERE type='table' AND name='users' LIMIT 1`).first();
+  if (usersTable?.ok === 1) {
+    const row = await env.SYSTEME_DB.prepare(`SELECT COUNT(*) count FROM users`).first();
+    initialized = Number(row?.count || 0) > 0;
+  }
+  if (!schema.ready) return json({ ok: true, initialized, database_initialized: false, schema_version: 0, missing_tables: schema.missing, d1_bound: true, kv_bound: kvBound, repair_needed: initialized, bootstrap_secret_configured: !!env.BOOTSTRAP_TOKEN });
+  return json({ ok: true, initialized, database_initialized: true, schema_version: SCHEMA_VERSION, missing_tables: [], d1_bound: true, kv_bound: kvBound, repair_needed: false, bootstrap_secret_configured: !!env.BOOTSTRAP_TOKEN });
 }
 async function bootstrap(request, env) {
+  assertCloudflareBindings(env);
   if (!env.BOOTSTRAP_TOKEN) throw httpError(503, 'Configurez d’abord le secret Cloudflare BOOTSTRAP_TOKEN.', 'BOOTSTRAP_SECRET_MISSING');
   const b = await bodyJson(request);
-  if (!b.bootstrap_token || b.bootstrap_token !== env.BOOTSTRAP_TOKEN) throw httpError(403, 'Code d’initialisation incorrect.');
+  if (!b.bootstrap_token || b.bootstrap_token !== env.BOOTSTRAP_TOKEN) throw httpError(403, 'Code d’initialisation incorrect.', 'BOOTSTRAP_TOKEN_INVALID');
   const email = clean(b.email, 254)?.toLowerCase();
   const name = clean(b.name, 150);
   if (!email || !name) throw httpError(400, 'Nom et email obligatoires.');
+  validatePassword(b.password); // validation avant toute écriture D1
   let schema = await databaseSchemaState(env);
   if (!schema.ready) schema = await installInitialSchema(env);
   const count = await env.SYSTEME_DB.prepare(`SELECT COUNT(*) count FROM users`).first();
-  if (Number(count?.count || 0) > 0) throw httpError(409, 'Le système est déjà initialisé.');
+  if (Number(count?.count || 0) > 0) throw httpError(409, 'Le système est déjà initialisé.', 'ALREADY_INITIALIZED');
   const pw = await passwordRecord(b.password);
   const employeeId = uuid(), userId = uuid();
   const names = name.split(/\s+/); const last = names.shift() || name; const first = names.join(' ') || 'Administrateur';
-  await env.SYSTEME_DB.batch([
-    env.SYSTEME_DB.prepare(`INSERT INTO employees(id,matricule,first_name,last_name,email,function_title,status) VALUES(?,?,?,?,?,'Super Administrateur','active')`).bind(employeeId, employeeRef(), first, last, email),
-    env.SYSTEME_DB.prepare(`INSERT INTO users(id,employee_id,name,email,password_hash,password_salt,role,active) VALUES(?,?,?,?,?,?,'super_admin',1)`).bind(userId, employeeId, name, email, pw.hash, pw.salt)
-  ]);
+  try {
+    await env.SYSTEME_DB.batch([
+      env.SYSTEME_DB.prepare(`INSERT INTO employees(id,matricule,first_name,last_name,email,function_title,status) VALUES(?,?,?,?,?,'Super Administrateur','active')`).bind(employeeId, employeeRef(), first, last, email),
+      env.SYSTEME_DB.prepare(`INSERT INTO users(id,employee_id,name,email,password_hash,password_salt,role,active) VALUES(?,?,?,?,?,?,'super_admin',1)`).bind(userId, employeeId, name, email, pw.hash, pw.salt)
+    ]);
+  } catch (e) {
+    console.error('BOOTSTRAP_USER_CREATE_FAILED', e?.message || e);
+    throw httpError(500, 'La base est prête mais la création du Super Administrateur a échoué. Vérifiez que cet email n’existe pas déjà puis réessayez.', 'BOOTSTRAP_USER_CREATE_FAILED');
+  }
   const user = { id: userId, name, email, role: 'super_admin', employee_id: employeeId, active: 1 };
-  const s = await createSession(request, env, user);
+  let session;
+  try { session = await createSession(request, env, user); }
+  catch (e) {
+    console.error('BOOTSTRAP_SESSION_FAILED', e?.message || e);
+    throw httpError(500, 'Le Super Administrateur a été créé, mais la session n’a pas pu être ouverte. Rechargez la page et connectez-vous avec votre email et votre mot de passe.', 'BOOTSTRAP_SESSION_FAILED');
+  }
   await audit(env, { user }, request, 'SYSTEM_BOOTSTRAP', 'user', userId, null, { email, role: 'super_admin' });
-  return json({ ok: true, user }, 201, { 'set-cookie': sessionCookie(request, s.token, s.ttl) });
+  return json({ ok: true, user }, 201, { 'set-cookie': sessionCookie(request, session.token, session.ttl) });
 }
 async function login(request, env) {
+  assertCloudflareBindings(env);
+  let schema = await databaseSchemaState(env);
+  if (!schema.ready) schema = await installInitialSchema(env);
   const b = await bodyJson(request); const email = clean(b.email, 254)?.toLowerCase(); const password = b.password;
   if (!email || !password) throw httpError(400, 'Email et mot de passe obligatoires.');
   const user = await env.SYSTEME_DB.prepare(`SELECT * FROM users WHERE lower(email)=?`).bind(email).first();
@@ -279,7 +386,11 @@ async function login(request, env) {
 }
 async function logout(request, env) {
   const token = parseCookie(request, SESSION_COOKIE);
-  if (token) await env.SYSTEME_KV.delete(`session:${token}`);
+  if (token) {
+    const tokenHash = await sha256Hex(token);
+    try { await env.SYSTEME_DB.prepare(`DELETE FROM sessions WHERE token_hash=?`).bind(tokenHash).run(); } catch {}
+    if (env.SYSTEME_KV?.delete) { try { await env.SYSTEME_KV.delete(`session:${tokenHash}`); } catch {} }
+  }
   return json({ ok: true }, 200, { 'set-cookie': clearSessionCookie(request) });
 }
 

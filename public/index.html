@@ -35,6 +35,7 @@
         <span class="badge gold">Première installation</span>
         <h2>Initialiser MEGA SERVICES</h2>
         <p class="muted">Créez le premier Super Administrateur. Le code d’initialisation doit être configuré comme secret <b>BOOTSTRAP_TOKEN</b> dans Cloudflare. Si D1 est vide, les tables seront créées automatiquement après validation de ce code.</p>
+        <div id="bootstrap-diagnostics" class="install-diagnostics" aria-live="polite"></div>
         <form id="bootstrap-form" class="form-stack">
           <label>Nom complet<input id="boot-name" required value="Administrateur MEGA SERVICES"></label>
           <label>Email<input id="boot-email" type="email" autocomplete="username" required></label>
@@ -55,7 +56,7 @@
       <nav id="nav"></nav>
       <div class="sidebar-foot">
         <div class="status-dot"><i></i><span id="system-status">Cloud connecté</span></div>
-        <small>MSWS v1.1.0</small>
+        <small>MSWS v1.2.0</small>
       </div>
     </aside>
 
