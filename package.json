@@ -1,14 +1,15 @@
 {
   "name": "mega-services-work-system",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "private": true,
-  "description": "Système intégré de travail et de gestion de MEGA SERVICES SARL U sur Cloudflare Pages + Functions + D1 + KV.",
+  "description": "Système intégré MEGA SERVICES SARL U sur Cloudflare Pages + Functions + D1 + KV.",
   "scripts": {
+    "build": "npm run check",
     "dev": "wrangler pages dev public",
     "db:local": "wrangler d1 migrations apply systeme-d1 --local",
     "db:remote": "wrangler d1 migrations apply systeme-d1 --remote",
-    "deploy": "npm run db:remote && wrangler pages deploy public --project-name mega-services-work-system",
-    "check": "node --check public/app.js && node --check 'functions/api/[[path]].js' && node scripts/check.mjs"
+    "deploy": "wrangler pages deploy public --project-name mega-services-work-system",
+    "check": "node --check public/app.js && node --check 'functions/api/[[path]].js' && node --check functions/api/schema.js && node scripts/check.mjs"
   },
   "devDependencies": {
     "wrangler": "^4.0.0"

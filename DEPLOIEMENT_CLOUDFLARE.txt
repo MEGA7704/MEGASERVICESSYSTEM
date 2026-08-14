@@ -1,0 +1,33 @@
+MEGA SERVICES WORK SYSTEM v1.1.0
+
+PARAMÈTRES CLOUDFLARE PAGES
+---------------------------
+Chemin d'accès / Root directory : LAISSER VIDE
+Commande de version / Build command : exit 0
+Répertoire de sortie / Build output directory : public
+Branche de production : main (ou votre branche principale)
+
+SECRET À CRÉER DANS CLOUDFLARE
+-------------------------------
+BOOTSTRAP_TOKEN = choisissez une valeur longue et privée.
+
+D1
+--
+Nom : systeme-d1
+ID : 1b2c5789-288b-4741-b26a-41e7df08ddc3
+Binding : SYSTEME_DB
+
+KV
+--
+Nom : systeme_kv
+ID : 44f6968fcb75493e9e7d5bbdacabf760
+Binding : SYSTEME_KV
+
+PREMIÈRE OUVERTURE
+------------------
+La base D1 peut être vide. La création des tables est maintenant intégrée au premier formulaire d'initialisation et protégée par BOOTSTRAP_TOKEN.
+Il n'est plus nécessaire d'appliquer manuellement les migrations pour une installation neuve.
+
+IMPORTANT POUR GITHUB
+---------------------
+Les fichiers de ce ZIP sont directement à la racine de l'archive. Envoyez-les tels quels à la racine du dépôt GitHub. Ne créez pas un sous-dossier mega-services-work-system.

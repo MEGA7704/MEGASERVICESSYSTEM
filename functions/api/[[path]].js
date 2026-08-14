@@ -1,3 +1,5 @@
+import { INITIAL_SCHEMA_SQL, REQUIRED_TABLES, SCHEMA_VERSION } from './schema.js';
+
 const SESSION_COOKIE = 'msws_session';
 const DEFAULT_SESSION_TTL = 60 * 60 * 8;
 const PBKDF2_ITERATIONS = 120000;
@@ -208,23 +210,42 @@ async function audit(env, auth, request, action, entityType, entityId, oldData =
   } catch (e) { console.warn('AUDIT_FAILED', e?.message || e); }
 }
 
+async function databaseSchemaState(env) {
+  const placeholders = REQUIRED_TABLES.map(() => '?').join(',');
+  const rows = await env.SYSTEME_DB.prepare(`SELECT name FROM sqlite_schema WHERE type='table' AND name IN (${placeholders})`)
+    .bind(...REQUIRED_TABLES).all();
+  const present = new Set((rows.results || []).map(r => r.name));
+  const missing = REQUIRED_TABLES.filter(name => !present.has(name));
+  return { ready: missing.length === 0, missing };
+}
+async function installInitialSchema(env) {
+  await env.SYSTEME_DB.exec(INITIAL_SCHEMA_SQL);
+  const state = await databaseSchemaState(env);
+  if (!state.ready) throw httpError(500, `Initialisation D1 incomplète. Tables manquantes : ${state.missing.join(', ')}`, 'D1_SCHEMA_INIT_FAILED');
+  return state;
+}
 async function health(env) {
   const db = await env.SYSTEME_DB.prepare(`SELECT 1 ok`).first();
-  return json({ ok: true, app: 'MEGA SERVICES WORK SYSTEM', database: db?.ok === 1 ? 'connected' : 'unknown', kv: !!env.SYSTEME_KV, time: nowIso() });
+  const schema = await databaseSchemaState(env);
+  return json({ ok: true, app: 'MEGA SERVICES WORK SYSTEM', database: db?.ok === 1 ? 'connected' : 'unknown', database_initialized: schema.ready, schema_version: schema.ready ? SCHEMA_VERSION : 0, missing_tables: schema.missing, kv: !!env.SYSTEME_KV, time: nowIso() });
 }
 async function bootstrapStatus(env) {
+  const schema = await databaseSchemaState(env);
+  if (!schema.ready) return json({ ok: true, initialized: false, database_initialized: false, schema_version: 0, missing_tables: schema.missing, bootstrap_secret_configured: !!env.BOOTSTRAP_TOKEN });
   const row = await env.SYSTEME_DB.prepare(`SELECT COUNT(*) count FROM users`).first();
-  return json({ ok: true, initialized: Number(row?.count || 0) > 0, bootstrap_secret_configured: !!env.BOOTSTRAP_TOKEN });
+  return json({ ok: true, initialized: Number(row?.count || 0) > 0, database_initialized: true, schema_version: SCHEMA_VERSION, missing_tables: [], bootstrap_secret_configured: !!env.BOOTSTRAP_TOKEN });
 }
 async function bootstrap(request, env) {
-  const count = await env.SYSTEME_DB.prepare(`SELECT COUNT(*) count FROM users`).first();
-  if (Number(count?.count || 0) > 0) throw httpError(409, 'Le système est déjà initialisé.');
   if (!env.BOOTSTRAP_TOKEN) throw httpError(503, 'Configurez d’abord le secret Cloudflare BOOTSTRAP_TOKEN.', 'BOOTSTRAP_SECRET_MISSING');
   const b = await bodyJson(request);
   if (!b.bootstrap_token || b.bootstrap_token !== env.BOOTSTRAP_TOKEN) throw httpError(403, 'Code d’initialisation incorrect.');
   const email = clean(b.email, 254)?.toLowerCase();
   const name = clean(b.name, 150);
   if (!email || !name) throw httpError(400, 'Nom et email obligatoires.');
+  let schema = await databaseSchemaState(env);
+  if (!schema.ready) schema = await installInitialSchema(env);
+  const count = await env.SYSTEME_DB.prepare(`SELECT COUNT(*) count FROM users`).first();
+  if (Number(count?.count || 0) > 0) throw httpError(409, 'Le système est déjà initialisé.');
   const pw = await passwordRecord(b.password);
   const employeeId = uuid(), userId = uuid();
   const names = name.split(/\s+/); const last = names.shift() || name; const first = names.join(' ') || 'Administrateur';

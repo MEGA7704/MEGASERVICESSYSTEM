@@ -1,229 +1,133 @@
-# MEGA SERVICES WORK SYSTEM — Cloudflare + GitHub
+# MEGA SERVICES WORK SYSTEM v1.1 — Cloudflare Pages + GitHub
 
 Application intégrée de travail et de gestion pour **MEGA SERVICES SARL U**.
 
-## Ressources Cloudflare déjà configurées dans `wrangler.toml`
+## Configuration Cloudflare déjà incluse
 
-- D1 : `systeme-d1`
-  - ID : `1b2c5789-288b-4741-b26a-41e7df08ddc3`
-  - Binding applicatif : `SYSTEME_DB`
-- KV : `systeme_kv`
-  - ID : `44f6968fcb75493e9e7d5bbdacabf760`
-  - Binding applicatif : `SYSTEME_KV`
+- D1 : `systeme-d1` — `1b2c5789-288b-4741-b26a-41e7df08ddc3` — binding `SYSTEME_DB`
+- KV : `systeme_kv` — `44f6968fcb75493e9e7d5bbdacabf760` — binding `SYSTEME_KV`
+- Sortie Pages : `./public`
+- Fonctions API : `functions/api/[[path]].js`
 
-> Le fichier ne contient volontairement aucun mot de passe, token Cloudflare ou secret de Super Admin.
+Aucun mot de passe ni token Cloudflare n’est inclus dans Git.
 
-## Modules inclus dans cette V1
+## Déploiement GitHub → Cloudflare Pages
 
-- Connexion sécurisée et création du premier Super Admin
-- Sessions stockées dans KV
-- Mots de passe dérivés par PBKDF2-SHA256 avec sel aléatoire
-- Rôles et contrôle d’accès serveur
-- Tableau de bord Direction
-- Clients et historique transversal
-- Catalogue de services et tarifs
-- Travaux clients et suivi des statuts
-- Paiements, reçus et soldes à payer
-- Atelier de documents avec versions D1 et impression
-- Caisse multicomptes et clôture avec calcul d’écart
-- Wave / Orange Money / MTN Money / Moov Money
-- Produits, stock, mouvements, seuils d’alerte
-- Ventes avec décrément automatique du stock
-- Facture de vente imprimable
-- Crédits clients et remboursements
-- Dépenses
-- Fournisseurs
-- Employés et comptes utilisateurs
-- Rapports financiers et export CSV
-- Recherche universelle
-- Journal d’audit
-- Paramètres entreprise
-- Page Santé système
-- Interface responsive ordinateur / tablette / téléphone
-- Workflow GitHub Actions pour migrations D1 + déploiement Pages
+Le ZIP est volontairement construit **sans dossier parent** : copiez son contenu directement à la racine du dépôt GitHub.
 
-## 1. Préparer GitHub
+Dans Cloudflare Pages, utilisez :
 
-Créez un dépôt GitHub, par exemple :
+- **Chemin d’accès / Root directory :** laisser vide
+- **Commande de version / Build command :** `exit 0`
+- **Répertoire de sortie / Build output directory :** `public`
+- **Branche de production :** `main` (ou votre branche principale)
 
-`mega-services-work-system`
+`wrangler.toml` contient déjà les bindings D1/KV et `pages_build_output_dir = "./public"`.
 
-Décompressez le ZIP à la racine du dépôt puis poussez les fichiers sur la branche `main`.
+## Secret obligatoire
 
-## 2. Créer le projet Cloudflare Pages
+Dans Cloudflare > Workers & Pages > votre projet > Settings > Variables and Secrets, créez un **Secret** :
 
-Dans Cloudflare > Workers & Pages, créez un projet Pages nommé exactement :
+`BOOTSTRAP_TOKEN`
 
-`mega-services-work-system`
+Choisissez une valeur longue et privée. Ne la placez jamais dans GitHub.
 
-Vous pouvez soit connecter le dépôt GitHub, soit laisser GitHub Actions assurer le Direct Upload.
+## Première ouverture — D1 automatique
 
-Le workflow fourni utilise le Direct Upload Wrangler.
+La v1.1 corrige le blocage « Base D1 non initialisée ».
 
-## 3. Ajouter les secrets GitHub
+Au premier chargement, l’API vérifie le schéma D1 sans supposer que la table `users` existe. Si la base est vide, l’écran **Initialiser MEGA SERVICES** reste accessible.
 
-Dans GitHub :
+Lorsque vous validez le formulaire avec le bon `BOOTSTRAP_TOKEN` :
 
-Settings > Secrets and variables > Actions > New repository secret
+1. le serveur vérifie le secret ;
+2. il crée automatiquement les tables et index manquants dans D1 ;
+3. il insère les caisses, catégories et services de départ ;
+4. il crée le premier Super Administrateur ;
+5. il ouvre la session sécurisée dans KV.
 
-Ajoutez :
+L’initialisation D1 n’est donc plus une étape manuelle obligatoire pour une installation neuve.
 
-- `CLOUDFLARE_API_TOKEN`
-- `CLOUDFLARE_ACCOUNT_ID`
-
-Le token Cloudflare doit pouvoir au minimum déployer Pages et appliquer les migrations D1 du compte concerné.
-
-## 4. Configurer le secret d’initialisation du Super Admin
-
-Créez un code long et aléatoire. Ne l’écrivez jamais dans le dépôt GitHub.
-
-Depuis un terminal authentifié Cloudflare :
-
-```bash
-npx wrangler pages secret put BOOTSTRAP_TOKEN --project-name mega-services-work-system
-```
-
-Entrez votre code secret lorsqu’il est demandé.
-
-Ce code n’est utilisé que pour protéger l’écran de première initialisation.
-
-## 5. Appliquer les migrations D1
-
-Le workflow GitHub le fait automatiquement avant chaque déploiement :
-
-```bash
-npx wrangler d1 migrations apply systeme-d1 --remote
-```
-
-Pour le faire manuellement :
+Les fichiers `migrations/*.sql` restent présents et constituent la source de vérité pour les futures évolutions de schéma. Pour une maintenance manuelle :
 
 ```bash
 npm install
 npm run db:remote
 ```
 
-## 6. Déploiement manuel
+## Vérification locale du projet
 
 ```bash
 npm install
 npm run check
-npm run deploy
 ```
 
-## 7. Première ouverture
-
-Lors de la toute première ouverture, si aucun utilisateur n’existe, l’application affiche :
-
-**Première installation — Initialiser MEGA SERVICES**
-
-Renseignez :
-
-- nom du Super Administrateur ;
-- email ;
-- mot de passe de 10 caractères minimum ;
-- valeur du secret `BOOTSTRAP_TOKEN`.
-
-Après validation, le premier compte `super_admin` est créé et la session est ouverte.
-
-Une fois le premier utilisateur créé, l’API refuse toute nouvelle tentative de bootstrap.
-
-## 8. Développement local
+Pour le développement local :
 
 ```bash
-npm install
 cp .dev.vars.example .dev.vars
 npm run db:local
 npm run dev
 ```
 
-Le développement local utilise les ressources locales simulées par Wrangler. Il n’écrit pas dans la base D1 de production avec cette configuration.
+## Modules inclus
 
-## 9. Règle importante — remboursement des crédits
+- authentification sécurisée et Super Admin ;
+- sessions KV ;
+- clients ;
+- services ;
+- travaux ;
+- paiements et reçus ;
+- documents et versions ;
+- caisse multicomptes et clôture ;
+- Wave / Orange Money / MTN Money / Moov Money ;
+- produits, stock et mouvements ;
+- ventes et factures ;
+- crédits et remboursements ;
+- dépenses ;
+- fournisseurs ;
+- employés et utilisateurs ;
+- rapports ;
+- recherche universelle ;
+- journal d’audit ;
+- paramètres entreprise ;
+- santé système.
 
-Le remboursement d’un crédit est calculé à partir de la **dette restante du crédit**.
+## Règle crédit importante
 
-Exemple :
+Un remboursement diminue la dette restante. Il n’est pas bloqué par un contrôle de « solde disponible » du compte crédit.
 
-- dette restante : 108 000 FCFA
-- remboursement reçu : 10 000 FCFA
-- nouvelle dette : 98 000 FCFA
+Exemple : dette 108 000 FCFA, remboursement 10 000 FCFA, nouveau solde 98 000 FCFA.
 
-Le système ne demande pas que le compte crédit dispose d’un “solde disponible” pour accepter le remboursement.
+## Stockage de fichiers et IA
 
-## 10. Documents et fichiers
+Cette version utilise uniquement les ressources demandées **D1 + KV**. Les gros fichiers binaires (scans, PDF importés, photos, CNI, diplômes) nécessiteront idéalement R2. L’IA et WhatsApp nécessitent également leurs propres services/secrets et ne sont pas simulés avec de fausses données.
 
-Cette version stocke le contenu éditable des documents texte dans D1 et conserve les versions.
+## Sécurité
 
-Les pièces binaires lourdes — photos, scans, PDF importés, CNI, diplômes, etc. — ne sont **pas** stockées dans D1 afin d’éviter de transformer la base relationnelle en stockage de fichiers.
-
-Pour ces pièces, la prochaine extension recommandée est un bucket Cloudflare R2 avec un binding séparé. Cette V1 reste donc strictement conforme aux ressources demandées : **KV + D1**.
-
-## 11. Intelligence artificielle
-
-L’interface documentaire est prête à recevoir un assistant IA, mais aucune clé externe n’est intégrée au dépôt et aucune fausse IA n’est simulée.
-
-L’intégration pourra ensuite se faire avec un fournisseur choisi ou avec une ressource Cloudflare adaptée, en conservant les secrets exclusivement côté serveur.
-
-## 12. Sécurité
-
-Principes déjà appliqués :
-
+- mots de passe PBKDF2-SHA256 avec sel ;
 - aucun mot de passe en clair ;
-- aucun secret dans Git ;
-- cookie de session HttpOnly + SameSite Strict + Secure en HTTPS ;
-- session stockée dans KV avec expiration ;
-- validation des rôles côté API ;
-- contrôle d’origine sur les requêtes de modification ;
-- en-têtes de sécurité et Content Security Policy ;
-- blocage temporaire après échecs répétés de connexion ;
-- journalisation des actions sensibles ;
-- pas de suppression silencieuse des écritures financières dans l’interface V1.
+- cookie de session HttpOnly / Secure / SameSite ;
+- sessions côté KV ;
+- permissions côté serveur ;
+- contrôle d’origine des écritures ;
+- CSP et en-têtes de sécurité ;
+- verrouillage après échecs répétés ;
+- journal d’audit ;
+- initialisation D1 protégée par `BOOTSTRAP_TOKEN`.
 
-## 13. Arborescence
+## Arborescence attendue à la racine GitHub
 
 ```text
-mega-services-work-system/
-├── .github/workflows/deploy.yml
-├── functions/api/[[path]].js
-├── migrations/
-│   ├── 0001_initial.sql
-│   └── 0002_add_supplier_orders.sql
-├── public/
-│   ├── index.html
-│   ├── app.js
-│   ├── styles.css
-│   ├── favicon.svg
-│   ├── _headers
-│   └── _routes.json
-├── scripts/check.mjs
-├── .dev.vars.example
-├── .gitignore
-├── package.json
-├── wrangler.toml
-└── README.md
+functions/
+migrations/
+public/
+scripts/
+.dev.vars.example
+.gitignore
+package.json
+wrangler.toml
+README.md
 ```
 
-## 14. Avant mise en production réelle
-
-1. Compléter les informations de MEGA SERVICES dans Paramètres.
-2. Saisir les tarifs réels des services.
-3. Vérifier les soldes initiaux des caisses et comptes Mobile Money.
-4. Créer un compte utilisateur distinct pour chaque employé.
-5. Tester une vente, un travail, un paiement, une dépense et un remboursement de crédit.
-6. Vérifier les rapports et les écarts de caisse.
-7. Ne partager aucun token Cloudflare ni `BOOTSTRAP_TOKEN`.
-
-## 15. Limites volontaires de cette V1
-
-Cette V1 est un noyau fonctionnel complet pour démarrer sur D1 + KV. Les éléments ci-dessous nécessitent une ressource ou une décision supplémentaire :
-
-- stockage de gros fichiers : R2 recommandé ;
-- envoi WhatsApp automatique : API WhatsApp / fournisseur à connecter ;
-- génération IA : fournisseur IA à connecter ;
-- PDF serveur avancé : moteur dédié à ajouter si nécessaire ;
-- multi-agences avancé : le schéma peut être étendu sans casser le noyau ;
-- synchronisation avec BANK MANAGER PRO : API/migration à réaliser après audit de la version utilisée.
-
----
-
-**MEGA SERVICES WORK SYSTEM — MSWS v1.0.0**
+**MEGA SERVICES WORK SYSTEM — MSWS v1.1.0**
