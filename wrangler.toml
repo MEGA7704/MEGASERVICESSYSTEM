@@ -1,0 +1,17 @@
+name = "mega-services-work-system"
+pages_build_output_dir = "./public"
+compatibility_date = "2026-08-14"
+
+[vars]
+APP_NAME = "MEGA SERVICES WORK SYSTEM"
+SESSION_TTL = "28800"
+
+[[d1_databases]]
+binding = "SYSTEME_DB"
+database_name = "systeme-d1"
+database_id = "1b2c5789-288b-4741-b26a-41e7df08ddc3"
+migrations_dir = "migrations"
+
+[[kv_namespaces]]
+binding = "SYSTEME_KV"
+id = "44f6968fcb75493e9e7d5bbdacabf760"

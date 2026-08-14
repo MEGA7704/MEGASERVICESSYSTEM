@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#0b3029">
+  <title>MEGA SERVICES WORK SYSTEM</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <div id="toast-root" class="toast-root" aria-live="polite"></div>
+
+  <section id="auth-view" class="auth-view">
+    <div class="auth-brand">
+      <div class="brand-mark">MS</div>
+      <div>
+        <p class="eyebrow">MEGA SERVICES SARL U</p>
+        <h1>WORK SYSTEM</h1>
+        <p>Travail • Gestion • Caisse • Stock • Documents • Pilotage</p>
+      </div>
+    </div>
+    <div class="auth-card">
+      <div id="login-panel">
+        <span class="badge gold">Accès sécurisé</span>
+        <h2>Connexion</h2>
+        <p class="muted">Connectez-vous à l’espace professionnel MEGA SERVICES.</p>
+        <form id="login-form" class="form-stack">
+          <label>Email<input id="login-email" type="email" autocomplete="username" required placeholder="admin@megaservices.ci"></label>
+          <label>Mot de passe<input id="login-password" type="password" autocomplete="current-password" minlength="10" required></label>
+          <button class="btn primary" type="submit">Se connecter</button>
+        </form>
+      </div>
+      <div id="bootstrap-panel" hidden>
+        <span class="badge gold">Première installation</span>
+        <h2>Initialiser MEGA SERVICES</h2>
+        <p class="muted">Créez le premier Super Administrateur. Le code d’initialisation doit être configuré comme secret <b>BOOTSTRAP_TOKEN</b> dans Cloudflare.</p>
+        <form id="bootstrap-form" class="form-stack">
+          <label>Nom complet<input id="boot-name" required value="Administrateur MEGA SERVICES"></label>
+          <label>Email<input id="boot-email" type="email" autocomplete="username" required></label>
+          <label>Mot de passe<input id="boot-password" type="password" minlength="10" autocomplete="new-password" required></label>
+          <label>Code d’initialisation<input id="boot-token" type="password" autocomplete="off" required></label>
+          <button class="btn primary" type="submit">Initialiser le système</button>
+        </form>
+      </div>
+    </div>
+  </section>
+
+  <div id="app" class="app" hidden>
+    <aside class="sidebar" id="sidebar">
+      <div class="side-brand">
+        <div class="brand-mark small">MS</div>
+        <div><strong>MEGA SERVICES</strong><span>WORK SYSTEM</span></div>
+      </div>
+      <nav id="nav"></nav>
+      <div class="sidebar-foot">
+        <div class="status-dot"><i></i><span id="system-status">Cloud connecté</span></div>
+        <small>MSWS v1.0.0</small>
+      </div>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <button class="icon-btn mobile-only" id="menu-btn" aria-label="Menu">☰</button>
+        <div class="global-search-wrap">
+          <span>⌕</span>
+          <input id="global-search" placeholder="Rechercher client, téléphone, facture, document, crédit…" autocomplete="off">
+          <div id="search-results" class="search-results" hidden></div>
+        </div>
+        <div class="top-actions">
+          <button class="btn compact" id="quick-btn">＋ Nouvelle opération</button>
+          <button class="icon-btn" id="refresh-btn" title="Actualiser">↻</button>
+          <div class="user-menu">
+            <button id="user-btn" class="user-chip"><span class="avatar" id="user-avatar">MS</span><span class="user-meta"><b id="user-name">Utilisateur</b><small id="user-role">Rôle</small></span><span>⌄</span></button>
+            <div id="user-dropdown" class="dropdown" hidden><button id="logout-btn">Déconnexion</button></div>
+          </div>
+        </div>
+      </header>
+
+      <section class="content">
+        <div class="page-head">
+          <div><p class="eyebrow" id="page-kicker">MEGA SERVICES</p><h1 id="page-title">Tableau de bord</h1><p id="page-subtitle" class="muted"></p></div>
+          <div id="page-actions" class="page-actions"></div>
+        </div>
+        <div id="page"></div>
+      </section>
+    </main>
+  </div>
+
+  <dialog id="modal" class="modal"><div class="modal-card"><div class="modal-head"><div><p class="eyebrow">MEGA SERVICES</p><h2 id="modal-title"></h2></div><button class="icon-btn" id="modal-close">×</button></div><div id="modal-body"></div></div></dialog>
+  <script type="module" src="/app.js"></script>
+</body>
+</html>
