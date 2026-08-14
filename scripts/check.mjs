@@ -20,8 +20,12 @@ for (const needle of [
   if (!wrangler.includes(needle)) { console.error('WRANGLER_CONFIG_MISSING', needle); failed = true; }
 }
 const api = fs.readFileSync('functions/api/[[path]].js','utf8');
-for (const needle of ['installInitialSchema', 'databaseSchemaState', 'INITIAL_SCHEMA_SQL']) {
+for (const needle of ['bootstrapSchemaStep', 'databaseSchemaState', 'INITIAL_SCHEMA_SQL', 'D1_SCHEMA_STATEMENT_FAILED']) {
   if (!api.includes(needle)) { console.error('FIRST_RUN_INIT_MISSING', needle); failed = true; }
 }
+const app = fs.readFileSync('public/app.js','utf8');
+for (const needle of ['prepareBootstrapSchema', 'Cloudflare Ray ID', 'bootstrap/schema']) {
+  if (!app.includes(needle)) { console.error('FRONTEND_INIT_MISSING', needle); failed = true; }
+}
 if (failed) process.exit(1);
-console.log('MSWS v1.2 source check: OK');
+console.log('MSWS v1.3 source check: OK');

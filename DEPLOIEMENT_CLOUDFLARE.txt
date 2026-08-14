@@ -1,4 +1,4 @@
-MEGA SERVICES WORK SYSTEM v1.2.0
+MEGA SERVICES WORK SYSTEM v1.3.0
 
 PARAMÈTRES CLOUDFLARE PAGES
 ---------------------------
@@ -44,3 +44,8 @@ PREMIÈRE OUVERTURE
 IMPORTANT POUR GITHUB
 ---------------------
 Les fichiers du ZIP sont directement à la racine de l'archive. Envoyez-les tels quels à la racine du dépôt GitHub. Ne créez pas de sous-dossier mega-services-work-system.
+
+
+## Correctif V1.3 — installation D1 progressive
+
+L’installation initiale ne crée plus tout le schéma dans une seule invocation. Le navigateur appelle `/api/bootstrap/schema` plusieurs fois et le serveur exécute seulement 3 instructions SQL par requête. Cette méthode réduit fortement le risque de coupure de fonction Cloudflare. Le formulaire affiche aussi le code API, la version et le Cloudflare Ray ID lorsqu’une erreur HTTP non JSON survient.

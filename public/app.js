@@ -21,13 +21,17 @@ async function api(path, options = {}) {
   const opts = { credentials: 'same-origin', ...options };
   opts.headers = { ...(options.body ? {'content-type':'application/json'} : {}), ...(options.headers || {}) };
   const res = await fetch(`/api/${path}`, opts);
+  const raw = await res.text();
   let data = {};
-  try { data = await res.json(); } catch {}
+  try { data = raw ? JSON.parse(raw) : {}; } catch {}
   if (!res.ok || data.ok === false) {
     if (res.status === 401 && state.user) { state.user = null; showAuth(); }
-    const err = new Error(data.error || `Erreur HTTP ${res.status}`);
+    const plain = raw && !raw.trim().startsWith('<') ? raw.trim().replace(/\s+/g,' ').slice(0,420) : '';
+    const err = new Error(data.error || plain || `Erreur HTTP ${res.status}`);
     err.status = res.status;
     err.code = data.code || '';
+    err.ray = res.headers.get('cf-ray') || '';
+    err.version = res.headers.get('x-msws-version') || data.version || '';
     throw err;
   }
   return data;
@@ -54,12 +58,26 @@ async function init(){
   try { const me=await api('auth/me'); state.user=me.user; showApp(); navigate(location.hash.slice(1)||'dashboard'); }
   catch { await showAuth(); }
 }
+async function prepareBootstrapSchema(token, button, diag){
+  let cursor = 0, total = 1, guard = 0;
+  while (cursor < total && guard++ < 200) {
+    if (button) button.textContent = total > 1 ? `Préparation D1… ${Math.min(cursor,total)}/${total}` : 'Préparation de la base D1…';
+    const d = await api('bootstrap/schema', {method:'POST', body:JSON.stringify({bootstrap_token:token, cursor})});
+    total = Math.max(1, Number(d.total || 1));
+    cursor = Number(d.next_cursor || 0);
+    if (diag) diag.innerHTML = `<div class="install-checks"><span class="ok">✓ D1 SYSTEME_DB</span><span class="ok">✓ BOOTSTRAP_TOKEN</span><span class="ok">Préparation ${Math.min(cursor,total)}/${total}</span></div><small>Installation progressive MSWS v${esc(d.version||'1.3.0')} — aucune grosse migration n’est exécutée dans une seule requête.</small>`;
+    if (d.done) return d;
+    if (cursor >= total && !d.database_initialized) throw Object.assign(new Error(`Préparation D1 incomplète. Tables manquantes : ${(d.missing_tables||[]).join(', ')}`), {code:'D1_SCHEMA_NOT_READY'});
+  }
+  throw Object.assign(new Error('La préparation D1 a dépassé le nombre maximal d’étapes autorisé.'), {code:'D1_SCHEMA_LOOP_GUARD'});
+}
+
 function bindStatic(){
   $('#modal-close').onclick=closeModal;
   $('#modal').addEventListener('click', e=>{ if(e.target===$('#modal')) closeModal(); });
   document.addEventListener('click',e=>{ if(e.target.matches('[data-close]')) closeModal(); });
   $('#login-form').onsubmit=async e=>{e.preventDefault();try{const d=await api('auth/login',{method:'POST',body:JSON.stringify({email:$('#login-email').value,password:$('#login-password').value})});state.user=d.user;showApp();navigate('dashboard');}catch(err){toast(err.message,'error')}};
-  $('#bootstrap-form').onsubmit=async e=>{e.preventDefault();const btn=e.submitter||e.target.querySelector('button[type="submit"]');if(btn){btn.disabled=true;btn.textContent='Initialisation en cours…';}try{const d=await api('bootstrap',{method:'POST',body:JSON.stringify({name:$('#boot-name').value,email:$('#boot-email').value,password:$('#boot-password').value,bootstrap_token:$('#boot-token').value})});state.user=d.user;showApp();navigate('dashboard');toast('Système initialisé avec succès.');}catch(err){const diag=$('#bootstrap-diagnostics');if(diag){diag.innerHTML=`<div class="install-error"><b>Échec de l’initialisation</b><span>${esc(err.message)}</span>${err.code?`<small>Code : ${esc(err.code)}</small>`:''}</div>`;}toast(err.message,'error');if(err.code==='BOOTSTRAP_SESSION_FAILED') setTimeout(()=>location.reload(),1600);}finally{if(btn){btn.disabled=false;btn.textContent='Initialiser le système';}}};
+  $('#bootstrap-form').onsubmit=async e=>{e.preventDefault();const btn=e.submitter||e.target.querySelector('button[type="submit"]');const diag=$('#bootstrap-diagnostics');const token=$('#boot-token').value;if(btn){btn.disabled=true;btn.textContent='Préparation de la base D1…';}try{await prepareBootstrapSchema(token,btn,diag);if(btn)btn.textContent='Création du Super Administrateur…';const d=await api('bootstrap',{method:'POST',body:JSON.stringify({name:$('#boot-name').value,email:$('#boot-email').value,password:$('#boot-password').value,bootstrap_token:token})});state.user=d.user;showApp();navigate('dashboard');toast('Système initialisé avec succès.');}catch(err){if(diag){diag.innerHTML=`<div class="install-error"><b>Échec de l’initialisation</b><span>${esc(err.message)}</span>${err.code?`<small>Code : ${esc(err.code)}</small>`:''}${err.ray?`<small>Cloudflare Ray ID : ${esc(err.ray)}</small>`:''}${err.version?`<small>API MSWS : v${esc(err.version)}</small>`:''}</div>`;}toast(err.message,'error');if(err.code==='BOOTSTRAP_SESSION_FAILED') setTimeout(()=>location.reload(),1600);}finally{if(btn){btn.disabled=false;btn.textContent='Initialiser le système';}}};
   $('#logout-btn').onclick=async()=>{try{await api('auth/logout',{method:'POST'});}catch{} state.user=null;showAuth();};
   $('#user-btn').onclick=()=>$('#user-dropdown').hidden=!$('#user-dropdown').hidden;
   $('#refresh-btn').onclick=()=>renderRoute();
@@ -70,7 +88,7 @@ function bindStatic(){
   document.addEventListener('click',e=>{ if(!e.target.closest('.global-search-wrap')) $('#search-results').hidden=true; });
   window.addEventListener('hashchange',()=>navigate(location.hash.slice(1)||'dashboard'));
 }
-async function showAuth(){ $('#app').hidden=true; $('#auth-view').hidden=false; try{const s=await api('bootstrap/status'); $('#bootstrap-panel').hidden=s.initialized; $('#login-panel').hidden=!s.initialized; const diag=$('#bootstrap-diagnostics'); const submit=$('#bootstrap-form button[type="submit"]'); if(diag&&!s.initialized){const checks=[['D1 SYSTEME_DB',s.d1_bound!==false,true],['KV SYSTEME_KV',s.kv_bound!==false,false],['BOOTSTRAP_TOKEN',!!s.bootstrap_secret_configured,true]];diag.innerHTML=`<div class="install-checks">${checks.map(([label,ok,required])=>`<span class="${ok?'ok':required?'bad':'warn'}">${ok?'✓':required?'✕':'!'} ${esc(label)}${!required?' (cache)':''}</span>`).join('')}</div>${!s.database_initialized&&s.d1_bound!==false?'<small>Le schéma D1 sera créé automatiquement lors de la validation. Les sessions restent fiables via D1 même si KV est temporairement indisponible.</small>':''}`;if(submit)submit.disabled=checks.some(([,ok,required])=>required&&!ok);} if(!s.initialized&&s.d1_bound===false) toast('Binding D1 SYSTEME_DB absent dans Cloudflare.','error'); else if(!s.initialized&&!s.bootstrap_secret_configured) toast('Configurez le secret BOOTSTRAP_TOKEN dans Cloudflare avant l’initialisation.','error'); else if(!s.initialized&&!s.database_initialized) toast('Base D1 détectée : les tables seront créées automatiquement lors de l’initialisation.'); else if(!s.initialized&&s.kv_bound===false) toast('KV n’est pas lié : le système utilisera D1 pour la session, mais ajoutez SYSTEME_KV ensuite.','error');}catch(err){toast(err.message||'Impossible d’accéder à la configuration Cloudflare.','error');} }
+async function showAuth(){ $('#app').hidden=true; $('#auth-view').hidden=false; try{const s=await api('bootstrap/status'); $('#bootstrap-panel').hidden=s.initialized; $('#login-panel').hidden=!s.initialized; const diag=$('#bootstrap-diagnostics'); const submit=$('#bootstrap-form button[type="submit"]'); if(diag&&!s.initialized){const checks=[['D1 SYSTEME_DB',s.d1_bound!==false,true],['KV SYSTEME_KV',s.kv_bound!==false,false],['BOOTSTRAP_TOKEN',!!s.bootstrap_secret_configured,true]];diag.innerHTML=`<div class="install-checks">${checks.map(([label,ok,required])=>`<span class="${ok?'ok':required?'bad':'warn'}">${ok?'✓':required?'✕':'!'} ${esc(label)}${!required?' (cache)':''}</span>`).join('')}</div>${!s.database_initialized&&s.d1_bound!==false?`<small>MSWS v${esc(s.version||'1.3.0')} — le schéma D1 sera préparé progressivement lors de la validation. Chaque étape utilise une requête Cloudflare courte.</small>`:''}`;if(submit)submit.disabled=checks.some(([,ok,required])=>required&&!ok);} if(!s.initialized&&s.d1_bound===false) toast('Binding D1 SYSTEME_DB absent dans Cloudflare.','error'); else if(!s.initialized&&!s.bootstrap_secret_configured) toast('Configurez le secret BOOTSTRAP_TOKEN dans Cloudflare avant l’initialisation.','error'); else if(!s.initialized&&!s.database_initialized) toast('Base D1 détectée : les tables seront créées automatiquement lors de l’initialisation.'); else if(!s.initialized&&s.kv_bound===false) toast('KV n’est pas lié : le système utilisera D1 pour la session, mais ajoutez SYSTEME_KV ensuite.','error');}catch(err){toast(err.message||'Impossible d’accéder à la configuration Cloudflare.','error');} }
 function showApp(){ $('#auth-view').hidden=true; $('#app').hidden=false; $('#user-name').textContent=state.user.name; $('#user-role').textContent=roleLabels[state.user.role]||state.user.role; $('#user-avatar').textContent=initials(state.user.name); renderNav(); checkHealth(); }
 function renderNav(){ $('#nav').innerHTML=navGroups.map(([g,items])=>`<div class="nav-group">${g}</div>${items.map(([r,i,l])=>`<button class="nav-item ${state.route===r?'active':''}" data-route="${r}"><span class="nav-icon">${i}</span>${l}</button>`).join('')}`).join(''); $$('#nav [data-route]').forEach(b=>b.onclick=()=>navigate(b.dataset.route)); }
 function navigate(route){ const known=new Set(navGroups.flatMap(g=>g[1].map(x=>x[0]))); state.route=known.has(route)?route:'dashboard'; state.page=1; if(location.hash.slice(1)!==state.route) history.replaceState(null,'',`#${state.route}`); renderNav(); $('#sidebar').classList.remove('open'); renderRoute(); }

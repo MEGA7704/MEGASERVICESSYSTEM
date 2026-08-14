@@ -2,7 +2,8 @@ import { INITIAL_SCHEMA_SQL, REQUIRED_TABLES, SCHEMA_VERSION } from './schema.js
 
 const SESSION_COOKIE = 'msws_session';
 const DEFAULT_SESSION_TTL = 60 * 60 * 8;
-const PBKDF2_ITERATIONS = 120000;
+const PBKDF2_ITERATIONS = 100000;
+const APP_VERSION = '1.3.0';
 
 const FULL_ROLES = new Set(['super_admin', 'admin', 'director']);
 const MANAGER_ROLES = new Set(['super_admin', 'admin', 'director', 'manager']);
@@ -21,6 +22,7 @@ export async function onRequest(context) {
 
     if (path === 'health' && request.method === 'GET') return health(env);
     if (path === 'bootstrap/status' && request.method === 'GET') return bootstrapStatus(env);
+    if (path === 'bootstrap/schema' && request.method === 'POST') return bootstrapSchemaStep(request, env);
     if (path === 'bootstrap' && request.method === 'POST') return bootstrap(request, env);
     if (path === 'auth/login' && request.method === 'POST') return login(request, env);
     if (path === 'auth/logout' && request.method === 'POST') return logout(request, env);
@@ -113,7 +115,7 @@ function enforceSameOrigin(request) {
 function json(data, status = 200, headers = {}) {
   return new Response(JSON.stringify(data), {
     status,
-    headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', ...headers }
+    headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', 'x-msws-version': APP_VERSION, ...headers }
   });
 }
 
@@ -286,23 +288,47 @@ async function databaseSchemaState(env) {
   const missing = REQUIRED_TABLES.filter(name => !present.has(name));
   return { ready: missing.length === 0, missing, binding_missing: false };
 }
-async function installInitialSchema(env) {
+async function bootstrapSchemaStep(request, env) {
   assertCloudflareBindings(env);
+  if (!env.BOOTSTRAP_TOKEN) throw httpError(503, 'Configurez d’abord le secret Cloudflare BOOTSTRAP_TOKEN.', 'BOOTSTRAP_SECRET_MISSING');
+  const b = await bodyJson(request);
+  if (!b.bootstrap_token || b.bootstrap_token !== env.BOOTSTRAP_TOKEN) throw httpError(403, 'Code d’initialisation incorrect.', 'BOOTSTRAP_TOKEN_INVALID');
+
   const statements = splitSqlStatements(INITIAL_SCHEMA_SQL);
-  const chunkSize = 12;
-  for (let i = 0; i < statements.length; i += chunkSize) {
-    const chunk = statements.slice(i, i + chunkSize);
+  const total = statements.length;
+  const cursor = Math.min(total, Math.max(0, int(b.cursor, 0)));
+  const perRequest = 3;
+  const slice = statements.slice(cursor, cursor + perRequest);
+
+  for (let i = 0; i < slice.length; i++) {
+    const statementIndex = cursor + i;
+    const sql = slice[i];
     try {
-      await env.SYSTEME_DB.batch(chunk.map(sql => env.SYSTEME_DB.prepare(sql)));
+      await env.SYSTEME_DB.prepare(sql).run();
     } catch (e) {
-      console.error('D1_SCHEMA_CHUNK_FAILED', { start: i + 1, end: i + chunk.length, message: e?.message || String(e) });
-      throw httpError(500, `Initialisation D1 interrompue au bloc SQL ${Math.floor(i / chunkSize) + 1}. Rechargez la page puis réessayez.`, 'D1_SCHEMA_INIT_FAILED');
+      const raw = String(e?.message || e || 'Erreur D1 inconnue').replace(/\s+/g, ' ').slice(0, 420);
+      console.error('D1_SCHEMA_STATEMENT_FAILED', { statement: statementIndex + 1, total, error: raw, sql: sql.slice(0, 180) });
+      throw httpError(500, `D1 a refusé l’étape ${statementIndex + 1}/${total} : ${raw}`, 'D1_SCHEMA_STATEMENT_FAILED');
     }
   }
-  const state = await databaseSchemaState(env);
-  if (!state.ready) throw httpError(500, `Initialisation D1 incomplète. Tables manquantes : ${state.missing.join(', ')}`, 'D1_SCHEMA_INIT_FAILED');
-  return state;
+
+  const nextCursor = cursor + slice.length;
+  const done = nextCursor >= total;
+  let state = { ready: false, missing: [...REQUIRED_TABLES] };
+  if (done) state = await databaseSchemaState(env);
+  return json({
+    ok: true,
+    version: APP_VERSION,
+    cursor,
+    next_cursor: nextCursor,
+    completed: nextCursor,
+    total,
+    done: done && state.ready,
+    database_initialized: done && state.ready,
+    missing_tables: done ? state.missing : []
+  });
 }
+
 async function health(env) {
   const d1Bound = !!env.SYSTEME_DB && typeof env.SYSTEME_DB.prepare === 'function';
   const kvBound = !!env.SYSTEME_KV && typeof env.SYSTEME_KV.get === 'function';
@@ -311,12 +337,12 @@ async function health(env) {
     db = await env.SYSTEME_DB.prepare(`SELECT 1 ok`).first();
     schema = await databaseSchemaState(env);
   }
-  return json({ ok: true, app: 'MEGA SERVICES WORK SYSTEM', database: d1Bound && db?.ok === 1 ? 'connected' : 'missing', database_initialized: schema.ready, schema_version: schema.ready ? SCHEMA_VERSION : 0, missing_tables: schema.missing, kv: kvBound, bootstrap_secret_configured: !!env.BOOTSTRAP_TOKEN, time: nowIso() });
+  return json({ ok: true, app: 'MEGA SERVICES WORK SYSTEM', version: APP_VERSION, database: d1Bound && db?.ok === 1 ? 'connected' : 'missing', database_initialized: schema.ready, schema_version: schema.ready ? SCHEMA_VERSION : 0, missing_tables: schema.missing, kv: kvBound, bootstrap_secret_configured: !!env.BOOTSTRAP_TOKEN, time: nowIso() });
 }
 async function bootstrapStatus(env) {
   const d1Bound = !!env.SYSTEME_DB && typeof env.SYSTEME_DB.prepare === 'function';
   const kvBound = !!env.SYSTEME_KV && typeof env.SYSTEME_KV.get === 'function' && typeof env.SYSTEME_KV.put === 'function';
-  if (!d1Bound) return json({ ok: true, initialized: false, database_initialized: false, schema_version: 0, missing_tables: [...REQUIRED_TABLES], d1_bound: false, kv_bound: kvBound, repair_needed: false, bootstrap_secret_configured: !!env.BOOTSTRAP_TOKEN });
+  if (!d1Bound) return json({ ok: true, version: APP_VERSION, initialized: false, database_initialized: false, schema_version: 0, missing_tables: [...REQUIRED_TABLES], d1_bound: false, kv_bound: kvBound, repair_needed: false, bootstrap_secret_configured: !!env.BOOTSTRAP_TOKEN });
   const schema = await databaseSchemaState(env);
   let initialized = false;
   const usersTable = await env.SYSTEME_DB.prepare(`SELECT 1 ok FROM sqlite_schema WHERE type='table' AND name='users' LIMIT 1`).first();
@@ -324,8 +350,8 @@ async function bootstrapStatus(env) {
     const row = await env.SYSTEME_DB.prepare(`SELECT COUNT(*) count FROM users`).first();
     initialized = Number(row?.count || 0) > 0;
   }
-  if (!schema.ready) return json({ ok: true, initialized, database_initialized: false, schema_version: 0, missing_tables: schema.missing, d1_bound: true, kv_bound: kvBound, repair_needed: initialized, bootstrap_secret_configured: !!env.BOOTSTRAP_TOKEN });
-  return json({ ok: true, initialized, database_initialized: true, schema_version: SCHEMA_VERSION, missing_tables: [], d1_bound: true, kv_bound: kvBound, repair_needed: false, bootstrap_secret_configured: !!env.BOOTSTRAP_TOKEN });
+  if (!schema.ready) return json({ ok: true, version: APP_VERSION, initialized, database_initialized: false, schema_version: 0, missing_tables: schema.missing, d1_bound: true, kv_bound: kvBound, repair_needed: initialized, bootstrap_secret_configured: !!env.BOOTSTRAP_TOKEN });
+  return json({ ok: true, version: APP_VERSION, initialized, database_initialized: true, schema_version: SCHEMA_VERSION, missing_tables: [], d1_bound: true, kv_bound: kvBound, repair_needed: false, bootstrap_secret_configured: !!env.BOOTSTRAP_TOKEN });
 }
 async function bootstrap(request, env) {
   assertCloudflareBindings(env);
@@ -336,8 +362,8 @@ async function bootstrap(request, env) {
   const name = clean(b.name, 150);
   if (!email || !name) throw httpError(400, 'Nom et email obligatoires.');
   validatePassword(b.password); // validation avant toute écriture D1
-  let schema = await databaseSchemaState(env);
-  if (!schema.ready) schema = await installInitialSchema(env);
+  const schema = await databaseSchemaState(env);
+  if (!schema.ready) throw httpError(409, `La préparation D1 n’est pas terminée. Tables manquantes : ${schema.missing.join(', ')}`, 'D1_SCHEMA_NOT_READY');
   const count = await env.SYSTEME_DB.prepare(`SELECT COUNT(*) count FROM users`).first();
   if (Number(count?.count || 0) > 0) throw httpError(409, 'Le système est déjà initialisé.', 'ALREADY_INITIALIZED');
   const pw = await passwordRecord(b.password);
@@ -364,8 +390,8 @@ async function bootstrap(request, env) {
 }
 async function login(request, env) {
   assertCloudflareBindings(env);
-  let schema = await databaseSchemaState(env);
-  if (!schema.ready) schema = await installInitialSchema(env);
+  const schema = await databaseSchemaState(env);
+  if (!schema.ready) throw httpError(503, 'La base D1 est incomplète. Utilisez l’écran de première installation pour terminer la préparation.', 'D1_SCHEMA_NOT_READY');
   const b = await bodyJson(request); const email = clean(b.email, 254)?.toLowerCase(); const password = b.password;
   if (!email || !password) throw httpError(400, 'Email et mot de passe obligatoires.');
   const user = await env.SYSTEME_DB.prepare(`SELECT * FROM users WHERE lower(email)=?`).bind(email).first();

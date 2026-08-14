@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#0b3029">
   <title>MEGA SERVICES WORK SYSTEM</title>
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="/styles.css">
+  <link rel="stylesheet" href="/styles.css?v=1.3.0">
 </head>
 <body>
   <div id="toast-root" class="toast-root" aria-live="polite"></div>
@@ -34,8 +34,9 @@
       <div id="bootstrap-panel" hidden>
         <span class="badge gold">Première installation</span>
         <h2>Initialiser MEGA SERVICES</h2>
-        <p class="muted">Créez le premier Super Administrateur. Le code d’initialisation doit être configuré comme secret <b>BOOTSTRAP_TOKEN</b> dans Cloudflare. Si D1 est vide, les tables seront créées automatiquement après validation de ce code.</p>
+        <p class="muted">Créez le premier Super Administrateur. Le code d’initialisation doit être configuré comme secret <b>BOOTSTRAP_TOKEN</b> dans Cloudflare. Si D1 est vide, les tables seront préparées progressivement après validation de ce code afin d’éviter les erreurs HTTP 500.</p>
         <div id="bootstrap-diagnostics" class="install-diagnostics" aria-live="polite"></div>
+        <small class="muted" style="display:block;margin:8px 0 12px">Version installateur : MSWS v1.3.0</small>
         <form id="bootstrap-form" class="form-stack">
           <label>Nom complet<input id="boot-name" required value="Administrateur MEGA SERVICES"></label>
           <label>Email<input id="boot-email" type="email" autocomplete="username" required></label>
@@ -56,7 +57,7 @@
       <nav id="nav"></nav>
       <div class="sidebar-foot">
         <div class="status-dot"><i></i><span id="system-status">Cloud connecté</span></div>
-        <small>MSWS v1.2.0</small>
+        <small>MSWS v1.3.0</small>
       </div>
     </aside>
 
@@ -89,6 +90,6 @@
   </div>
 
   <dialog id="modal" class="modal"><div class="modal-card"><div class="modal-head"><div><p class="eyebrow">MEGA SERVICES</p><h2 id="modal-title"></h2></div><button class="icon-btn" id="modal-close">×</button></div><div id="modal-body"></div></div></dialog>
-  <script type="module" src="/app.js"></script>
+  <script type="module" src="/app.js?v=1.3.0"></script>
 </body>
 </html>
